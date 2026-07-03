@@ -221,7 +221,9 @@ def screen_symbol(group: pd.DataFrame, pivot_lookback: int, price_bins: int):
 
 
 def load_bhavcopy(file) -> pd.DataFrame:
-    """Load and normalise a bhavcopy CSV."""
+    """Load and normalise a bhavcopy CSV. Supports both the legacy NSE
+    bhavcopy format and the newer UDiFF 'Common Bhavcopy' format
+    (columns like TCKRSYMB, TRADDT, TTLTRADGVOL etc.)."""
     content = file.read()
     try:
         text = content.decode("utf-8")
@@ -231,21 +233,43 @@ def load_bhavcopy(file) -> pd.DataFrame:
     df = pd.read_csv(StringIO(text))
     df.columns = [c.strip().upper() for c in df.columns]
 
-    # Filter EQ series
-    if "SERIES" in df.columns:
-        df = df[df["SERIES"].str.strip() == "EQ"].copy()
+    is_new_format = "TCKRSYMB" in df.columns
 
-    # Normalise column names
-    rename_map = {}
-    for c in df.columns:
-        if "CLOSE" in c:
-            rename_map[c] = "CLOSE_PRICE"
-        elif c in ("TOTTRDQTY", "VOLUME", "TTL_TRD_QNTY", "TOTAL_TRADED_QUANTITY"):
-            rename_map[c] = "TOTTRDQTY"
-        elif c == "DATE1" or c == "DATE":
-            rename_map[c] = "TIMESTAMP"
+    if is_new_format:
+        # New UDiFF combined bhavcopy: filter to equity cash-market rows only,
+        # since this file also bundles F&O / other instrument types.
+        if "SGMT" in df.columns:
+            df = df[df["SGMT"].astype(str).str.strip() == "CM"].copy()
+        if "FININSTRMTP" in df.columns:
+            df = df[df["FININSTRMTP"].astype(str).str.strip() == "STK"].copy()
+        if "SCTYSRS" in df.columns:
+            df = df[df["SCTYSRS"].astype(str).str.strip() == "EQ"].copy()
 
-    df = df.rename(columns=rename_map)
+        rename_map = {
+            "TCKRSYMB": "SYMBOL",
+            "SCTYSRS": "SERIES",
+            "TRADDT": "TIMESTAMP",
+            "OPNPRIC": "OPEN",
+            "HGHPRIC": "HIGH",
+            "LWPRIC": "LOW",
+            "CLSPRIC": "CLOSE_PRICE",
+            "TTLTRADGVOL": "TOTTRDQTY",
+        }
+        df = df.rename(columns=rename_map)
+    else:
+        # Legacy bhavcopy format
+        if "SERIES" in df.columns:
+            df = df[df["SERIES"].str.strip() == "EQ"].copy()
+
+        rename_map = {}
+        for c in df.columns:
+            if "CLOSE" in c:
+                rename_map[c] = "CLOSE_PRICE"
+            elif c in ("TOTTRDQTY", "VOLUME", "TTL_TRD_QNTY", "TOTAL_TRADED_QUANTITY"):
+                rename_map[c] = "TOTTRDQTY"
+            elif c == "DATE1" or c == "DATE":
+                rename_map[c] = "TIMESTAMP"
+        df = df.rename(columns=rename_map)
 
     for col in ["TIMESTAMP", "CLOSE_PRICE", "HIGH", "LOW", "OPEN", "TOTTRDQTY", "SYMBOL"]:
         if col not in df.columns:
@@ -450,3 +474,4 @@ with tab3:
           </div>
         </div>
         """, unsafe_allow_html=True)
+    
